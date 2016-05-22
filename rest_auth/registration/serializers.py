@@ -18,6 +18,8 @@ from requests.exceptions import HTTPError
 if 'allauth.socialaccount' in settings.INSTALLED_APPS:
     from allauth.socialaccount.helpers import complete_social_login
 
+AUTHORIZATION_CODE_EXPIRED = 'This authorization code has expired.'
+
 
 class SocialLoginSerializer(serializers.Serializer):
     access_token = serializers.CharField(required=False, allow_blank=True)
@@ -99,7 +101,13 @@ class SocialLoginSerializer(serializers.Serializer):
         else:
             raise serializers.ValidationError(_('Incorrect input. access_token or code is required.'))
 
-        token = adapter.parse_token({'access_token': access_token})
+        try:
+            token = client.get_access_token(code)
+        except OAuth2Error as e:
+            msg = e.message
+            if AUTHORIZATION_CODE_EXPIRED in msg:
+                raise serializers.ValidationError(_(AUTHORIZATION_CODE_EXPIRED))
+
         token.app = app
 
         try:
@@ -107,6 +115,8 @@ class SocialLoginSerializer(serializers.Serializer):
             complete_social_login(request, login)
         except HTTPError:
             raise serializers.ValidationError(_('Incorrect value'))
+        except KeyError as e:
+            raise serializers.ValidationError(_('Oh well, it happened. Here is the error: CLASS: {}, MESSAGE: {}'.format(e.__class__.__name__, e.message)))
 
         if not login.is_existing:
             login.lookup()
