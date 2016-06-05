@@ -8,6 +8,7 @@ try:
                                get_username_max_length)
     from allauth.account.adapter import get_adapter
     from allauth.account.utils import setup_user_email
+    from allauth.socialaccount.providers.oauth2.client import OAuth2Error
 except ImportError:
     raise ImportError('allauth needs to be added to INSTALLED_APPS.')
 
@@ -21,6 +22,9 @@ if 'allauth.socialaccount' in settings.INSTALLED_APPS:
         from allauth.socialaccount.helpers import complete_social_login
     except ImportError:
         pass
+
+AUTHORIZATION_CODE_EXPIRED = 'This authorization code has expired.'
+AUTHORIZATION_CODE_USED = 'This authorization code has been used.'
 
 
 class SocialLoginSerializer(serializers.Serializer):
@@ -60,7 +64,7 @@ class SocialLoginSerializer(serializers.Serializer):
         if not adapter_class:
             raise serializers.ValidationError(_('Define adapter_class in view'))
 
-        adapter = adapter_class()
+        adapter = adapter_class(request)
         app = adapter.get_provider().get_app(request)
 
         # More info on code vs access_token
@@ -97,7 +101,16 @@ class SocialLoginSerializer(serializers.Serializer):
                 self.callback_url,
                 scope
             )
-            token = client.get_access_token(code)
+
+            try:
+                token = client.get_access_token(code)
+            except OAuth2Error as e:
+                msg = e.message
+                if AUTHORIZATION_CODE_EXPIRED in msg:
+                    raise serializers.ValidationError(_(AUTHORIZATION_CODE_EXPIRED))
+                elif AUTHORIZATION_CODE_USED in msg:
+                    raise serializers.ValidationError(_(AUTHORIZATION_CODE_USED))
+
             access_token = token['access_token']
 
         else:
@@ -111,6 +124,8 @@ class SocialLoginSerializer(serializers.Serializer):
             complete_social_login(request, login)
         except HTTPError:
             raise serializers.ValidationError(_('Incorrect value'))
+        except KeyError as e:
+            raise serializers.ValidationError(_('Oh well, it happened. Here is the error: CLASS: {}, MESSAGE: {}'.format(e.__class__.__name__, e.message)))
 
         if not login.is_existing:
             login.lookup()
